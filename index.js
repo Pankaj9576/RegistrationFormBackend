@@ -9,7 +9,7 @@ console.log('MONGODB_URI:', process.env.MONGODB_URI); // Debug line
 
 const app = express();
 
-app.use(cors({ origin: 'https://registration-form-frontend-umber.vercel.app' }));
+app.use(cors({ origin: 'http:localhost:3000' }));
 app.use(express.json());
 
 // MongoDB Connection
