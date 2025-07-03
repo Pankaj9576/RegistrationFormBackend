@@ -2,14 +2,20 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const nodemailer = require('nodemailer');
 
-// Load .env file
+// Load environment variables from .env file
 dotenv.config();
-console.log('MONGODB_URI:', process.env.MONGODB_URI); // Debug line
+console.log('MONGODB_URI:', process.env.MONGODB_URI); // Debug line to verify MongoDB URI
 
 const app = express();
 
-app.use(cors({ origin: 'http:localhost:3000' }));
+// Updated CORS configuration to allow requests from Vercel frontend
+app.use(cors({
+  origin: ['https://registration-form-frontend-umber.vercel.app', 'http://localhost:3000'], // Allow both production and local development origins
+  methods: ['GET', 'POST'], // Specify allowed methods
+  credentials: true, // Allow credentials if needed
+}));
 app.use(express.json());
 
 // MongoDB Connection
@@ -34,10 +40,44 @@ const customerSchema = new mongoose.Schema({
   password: { type: String, required: true },
   latitude: { type: Number, required: true },
   longitude: { type: Number, required: true },
-  deviceInfo: { type: Object }, // New field for device info
+  deviceInfo: { type: Object }, // Store device information
 });
 
 const Customer = mongoose.model('Customer', customerSchema);
+
+// Configure Nodemailer transporter
+const transporter = nodemailer.createTransport({
+  service: 'gmail', // Using Gmail as the email service
+  auth: {
+    user: process.env.EMAIL_USER, // Your Gmail address from .env
+    pass: process.env.EMAIL_PASS, // Your Gmail App Password from .env
+  },
+});
+
+// Function to send confirmation email
+const sendConfirmationEmail = async (email, fullName) => {
+  try {
+    const mailOptions = {
+      from: `"Registration System" <${process.env.EMAIL_USER}>`, // Sender address
+      to: email, // Recipient's email
+      subject: 'Registration Confirmation', // Email subject
+      html: `
+        <h2>Welcome, ${fullName}!</h2>
+        <p>Thank you for registering with us!</p>
+        <p>Your account has been successfully created. You can now log in using your email and password.</p>
+        <p>If you did not initiate this registration, please contact our support team.</p>
+        <p>Best regards,<br>Registration System Team</p>
+      `, // HTML email content
+    };
+
+    // Send the email
+    await transporter.sendMail(mailOptions);
+    console.log(`Confirmation email sent to ${email}`);
+  } catch (error) {
+    console.error('Error sending email:', error.message);
+    throw new Error('Failed to send confirmation email');
+  }
+};
 
 // Test Route
 app.get('/api/test', (req, res) => {
@@ -58,7 +98,7 @@ app.get('/api/customers/phone/:phoneNumber', async (req, res) => {
   }
 });
 
-// API to handle form submission
+// API to handle form submission and send confirmation email
 app.post('/api/customers', async (req, res) => {
   try {
     const { fullName, email, phoneNumber, gender, dateOfBirth, address, password, confirmPassword, latitude, longitude, deviceInfo } = req.body;
@@ -80,6 +120,7 @@ app.post('/api/customers', async (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
+    // Create new customer
     const customer = new Customer({
       fullName,
       email,
@@ -90,16 +131,22 @@ app.post('/api/customers', async (req, res) => {
       password, // In production, hash the password using bcrypt
       latitude,
       longitude,
-      deviceInfo, // Save device info
+      deviceInfo,
     });
 
+    // Save Donations customer to database
     await customer.save();
-    res.status(201).json({ message: 'Customer registered successfully' });
+
+    // Send confirmation email
+    await sendConfirmationEmail(email, fullName);
+
+    res.status(201).json({ message: 'Customer registered successfully and confirmation email sent' });
   } catch (error) {
     console.error('Error in /api/customers:', error.message);
     res.status(500).json({ error: 'Server error: ' + error.message });
   }
 });
 
+// Start the server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
