@@ -2,23 +2,27 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const nodemailer = require('nodemailer');
+const sgMail = require('@sendgrid/mail');
 
 // Load environment variables from .env file
 dotenv.config();
 console.log('MONGODB_URI:', process.env.MONGODB_URI); // Debug line to verify MongoDB URI
+console.log('SENDGRID_API_KEY:', process.env.SENDGRID_API_KEY ? 'Set' : 'Not set'); // Debug line for SendGrid API key
 
 const app = express();
 
-// Updated CORS configuration to allow requests from Vercel frontend
+// Set SendGrid API key
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+// Configure CORS to allow requests from Vercel frontend and local development
 app.use(cors({
-  origin: ['https://registration-form-frontend-umber.vercel.app', 'http://localhost:3000'], // Allow both production and local development origins
+  origin: ['https://registration-form-frontend-umber.vercel.app', 'http://localhost:3000'], // Allow both production and local origins
   methods: ['GET', 'POST'], // Specify allowed methods
   credentials: true, // Allow credentials if needed
 }));
 app.use(express.json());
 
-// MongoDB Connection
+// Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
@@ -45,21 +49,12 @@ const customerSchema = new mongoose.Schema({
 
 const Customer = mongoose.model('Customer', customerSchema);
 
-// Configure Nodemailer transporter
-const transporter = nodemailer.createTransport({
-  service: 'gmail', // Using Gmail as the email service
-  auth: {
-    user: process.env.EMAIL_USER, // Your Gmail address from .env
-    pass: process.env.EMAIL_PASS, // Your Gmail App Password from .env
-  },
-});
-
-// Function to send confirmation email
+// Function to send confirmation email using SendGrid
 const sendConfirmationEmail = async (email, fullName) => {
   try {
-    const mailOptions = {
-      from: `"Registration System" <${process.env.EMAIL_USER}>`, // Sender address
+    const msg = {
       to: email, // Recipient's email
+      from: process.env.FROM_EMAIL, // Verified sender email from .env
       subject: 'Registration Confirmation', // Email subject
       html: `
         <h2>Welcome, ${fullName}!</h2>
@@ -71,11 +66,12 @@ const sendConfirmationEmail = async (email, fullName) => {
     };
 
     // Send the email
-    await transporter.sendMail(mailOptions);
+    await sgMail.send(msg);
     console.log(`Confirmation email sent to ${email}`);
   } catch (error) {
     console.error('Error sending email:', error.message);
-    throw new Error('Failed to send confirmation email');
+    // Log error but don't throw to avoid breaking registration
+    return { error: 'Failed to send confirmation email' };
   }
 };
 
@@ -134,11 +130,18 @@ app.post('/api/customers', async (req, res) => {
       deviceInfo,
     });
 
-    // Save Donations customer to database
+    // Save customer to database
     await customer.save();
 
     // Send confirmation email
-    await sendConfirmationEmail(email, fullName);
+    const emailResult = await sendConfirmationEmail(email, fullName);
+    if (emailResult?.error) {
+      // Log email failure but allow registration to complete
+      console.warn('Registration succeeded but email failed:', emailResult.error);
+      return res.status(201).json({ 
+        message: 'Customer registered successfully, but failed to send confirmation email' 
+      });
+    }
 
     res.status(201).json({ message: 'Customer registered successfully and confirmation email sent' });
   } catch (error) {
